@@ -12,7 +12,7 @@ UCHAT_API_TOKEN = "vGxEMeYgSBK1k6OGCulg47Ei9JBdzJKCjrVtDdsNYR5hPpYu3p6THVeGGJsM"
 CHATWOOT_BASE_URL = "https://chat.engosoft.com"
 CHATWOOT_API_TOKEN = "Buvw2SUpLEJPydCEywhdUd8H"
 ACCOUNT_ID = 2
-INBOX_ID = 24
+INBOX_ID = 25
 CSV_FILE_PATH = "data.csv"
 PROCESSED_FILE = "processed_numbers.txt"
 
