@@ -79,7 +79,11 @@ def get_or_create_contact(phone, name):
 
 def create_conversation(contact_id):
     headers = {"api_access_token": CHATWOOT_API_TOKEN, "Content-Type": "application/json"}
-    source_id = datetime.now().strftime("%Y%m%d%H%M%S") + str(contact_id)
+    
+    # 🚨 التعديل الهام هنا 🚨
+    # استخدام Timestamp بالميلي ثانية يولد رقم فريد من 13 خانة (أقل من الحد الأقصى 15)
+    source_id = str(int(time.time() * 1000))
+    
     payload = {"source_id": source_id, "inbox_id": INBOX_ID, "contact_id": contact_id, "status": "resolved"}
     try:
         r = requests.post(
