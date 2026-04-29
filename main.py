@@ -8,9 +8,10 @@ from datetime import datetime
 # ==========================================
 # الإعدادات من Environment Variables
 # ==========================================
-UCHAT_API_TOKEN = os.environ["UCHAT_API_TOKEN"]
+# استخدام .get() مع وضع قيم افتراضية لتتمكن من تشغيله محلياً (VS Code) دون الحاجة لضبط المتغيرات
+UCHAT_API_TOKEN = os.environ.get("UCHAT_API_TOKEN", "vGxEMeYgSBK1k6OGCulg47Ei9JBdzJKCjrVtDdsNYR5hPpYu3p6THVeGGJsM")
 CHATWOOT_BASE_URL = os.environ.get("CHATWOOT_BASE_URL", "https://chat.engosoft.com")
-CHATWOOT_API_TOKEN = os.environ["CHATWOOT_API_TOKEN"]
+CHATWOOT_API_TOKEN = os.environ.get("CHATWOOT_API_TOKEN", "Buvw2SUpLEJPydCEywhdUd8H")
 ACCOUNT_ID = int(os.environ.get("ACCOUNT_ID", "2"))
 INBOX_ID = int(os.environ.get("INBOX_ID", "25"))
 CSV_FILE_PATH = os.environ.get("CSV_FILE_PATH", "data.csv")
@@ -41,60 +42,83 @@ def mark_processed(phone):
 # ==========================================
 # UChat / Chatwoot helpers
 # ==========================================
-def fetch_uchat_messages(phone, user_ns):
+def fetch_uchat_messages(phone, user_ns, retries=3):
     url = "https://www.uchat.com.au/api/subscriber/chat-messages"
     headers = {"Authorization": f"Bearer {UCHAT_API_TOKEN}", "Accept": "application/json"}
     params = {"user_ns": user_ns} if user_ns else {"user_id": phone.replace("+", "")}
-    try:
-        r = requests.get(url, headers=headers, params=params, timeout=30)
-        if r.status_code == 200:
-            return r.json().get("data", [])
-        return []
-    except Exception:
-        return []
+    
+    for attempt in range(retries):
+        try:
+            r = requests.get(url, headers=headers, params=params, timeout=30)
+            if r.status_code == 200:
+                return r.json().get("data", [])
+            return []
+        except (requests.exceptions.Timeout, requests.exceptions.ConnectionError):
+            time.sleep(3)
+        except Exception:
+            return []
+    return []
 
-def get_or_create_contact(phone, name):
+def get_or_create_contact(phone, name, retries=3):
     headers = {"api_access_token": CHATWOOT_API_TOKEN, "Content-Type": "application/json"}
     safe_phone = phone if phone.startswith("+") else f"+{phone}"
-    try:
-        r = requests.get(
-            f"{CHATWOOT_BASE_URL}/api/v1/accounts/{ACCOUNT_ID}/contacts/search?q={safe_phone}",
-            headers=headers, timeout=30
-        )
-        if r.status_code == 200:
-            results = r.json().get("payload", [])
-            if results:
-                return results[0]["id"]
-        r2 = requests.post(
-            f"{CHATWOOT_BASE_URL}/api/v1/accounts/{ACCOUNT_ID}/contacts",
-            headers=headers,
-            json={"name": name, "phone_number": safe_phone},
-            timeout=30,
-        )
-        if r2.status_code == 200:
-            return r2.json()["payload"]["contact"]["id"]
-    except Exception as e:
-        print(f"  ❌ خطأ contact: {e}")
+    
+    for attempt in range(retries):
+        try:
+            r = requests.get(
+                f"{CHATWOOT_BASE_URL}/api/v1/accounts/{ACCOUNT_ID}/contacts/search?q={safe_phone}",
+                headers=headers, timeout=30
+            )
+            if r.status_code == 200:
+                results = r.json().get("payload", [])
+                if results:
+                    return results[0]["id"]
+            
+            r2 = requests.post(
+                f"{CHATWOOT_BASE_URL}/api/v1/accounts/{ACCOUNT_ID}/contacts",
+                headers=headers,
+                json={"name": name, "phone_number": safe_phone},
+                timeout=30,
+            )
+            if r2.status_code == 200:
+                return r2.json()["payload"]["contact"]["id"]
+            else:
+                print(f"  ❌ فشل إنشاء العميل (شات ووت): {r2.text}")
+                return None
+                
+        except (requests.exceptions.Timeout, requests.exceptions.ConnectionError):
+            print(f"  ⚠️ تأخر سيرفر Chatwoot في جهة الاتصال ({attempt+1}/{retries})...")
+            time.sleep(5)
+        except Exception as e:
+            print(f"  ❌ خطأ contact: {e}")
+            return None
+            
+    print("  ❌ فشل نهائي في الاتصال بـ Chatwoot لجهة الاتصال.")
     return None
 
-def create_conversation(contact_id):
+def create_conversation(contact_id, retries=3):
     headers = {"api_access_token": CHATWOOT_API_TOKEN, "Content-Type": "application/json"}
-    
-    # 🚨 التعديل الهام هنا 🚨
-    # استخدام Timestamp بالميلي ثانية يولد رقم فريد من 13 خانة (أقل من الحد الأقصى 15)
     source_id = str(int(time.time() * 1000))
-    
     payload = {"source_id": source_id, "inbox_id": INBOX_ID, "contact_id": contact_id, "status": "resolved"}
-    try:
-        r = requests.post(
-            f"{CHATWOOT_BASE_URL}/api/v1/accounts/{ACCOUNT_ID}/conversations",
-            headers=headers, json=payload, timeout=30,
-        )
-        if r.status_code == 200:
-            return r.json()["id"]
-        print(f"  ❌ فشل إنشاء محادثة: {r.text}")
-    except Exception as e:
-        print(f"  ❌ خطأ conversation: {e}")
+    
+    for attempt in range(retries):
+        try:
+            r = requests.post(
+                f"{CHATWOOT_BASE_URL}/api/v1/accounts/{ACCOUNT_ID}/conversations",
+                headers=headers, json=payload, timeout=30,
+            )
+            if r.status_code == 200:
+                return r.json()["id"]
+            print(f"  ❌ فشل إنشاء محادثة: {r.text}")
+            return None
+        except (requests.exceptions.Timeout, requests.exceptions.ConnectionError):
+            print(f"  ⚠️ تأخر سيرفر Chatwoot في المحادثة ({attempt+1}/{retries})...")
+            time.sleep(5)
+        except Exception as e:
+            print(f"  ❌ خطأ conversation: {e}")
+            return None
+            
+    print("  ❌ فشل نهائي في الاتصال بـ Chatwoot للمحادثة.")
     return None
 
 def send_note(conv_id, content, retries=3):
@@ -105,23 +129,29 @@ def send_note(conv_id, content, retries=3):
         try:
             requests.post(url, headers=headers, json=payload, timeout=30)
             return True
-        except Exception:
+        except (requests.exceptions.Timeout, requests.exceptions.ConnectionError):
             print(f"  ⚠️ إعادة المحاولة ({attempt+1}/{retries})...")
             time.sleep(3)
+        except Exception:
+            pass
     return False
 
 def migrate_user(phone, user_ns, name):
     messages = fetch_uchat_messages(phone, user_ns)
     if not messages:
         print("  📭 لا توجد رسائل.")
-        return
+        return True # إرجاع True لأنه لا يوجد خطأ، فقط لا توجد رسائل
+        
     messages.reverse()
+    
     contact_id = get_or_create_contact(phone, name)
     if not contact_id:
-        return
+        return False # إرجاع False لمنع حفظ الرقم كمكتمل
+        
     conv_id = create_conversation(contact_id)
     if not conv_id:
-        return
+        return False # إرجاع False لمنع حفظ الرقم كمكتمل
+        
     print(f"  ⏳ حقن {len(messages)} رسالة...")
     count = 0
     for msg in messages:
@@ -137,6 +167,7 @@ def migrate_user(phone, user_ns, name):
             count += 1
         time.sleep(0.5)
     print(f"  🎉 {count}/{len(messages)} رسالة بنجاح.")
+    return True
 
 # ==========================================
 # Entrypoint
@@ -170,18 +201,24 @@ def run():
         if not phone or phone in ["n.a", ""]:
             continue
         if phone in processed:
-            continue  # مفيش طباعة عشان مش يضرب الـ logs بـ 40K سطر
+            continue
 
         print(f"\n{'='*40}")
         print(f"🔄 [{i}/{total}] {name} | {phone}")
         print("=" * 40)
 
-        migrate_user(phone, user_ns, name)
-        mark_processed(phone)
-        processed.add(phone)
-        session_count += 1
+        # 🚨 التعديل الهام: التأكد من نجاح النقل قبل حفظ التقدم 🚨
+        success = migrate_user(phone, user_ns, name)
+        
+        if success:
+            mark_processed(phone)
+            processed.add(phone)
+            session_count += 1
+        else:
+            print("  ⚠️ فشل الاتصال بسيرفر شات ووت. لم يتم حفظ الرقم كمكتمل. سيتم إيقاف السكريبت مؤقتاً لمدة 30 ثانية...")
+            time.sleep(30) # الانتظار لعل السيرفر يعود للعمل
 
-        if session_count % 500 == 0:
+        if session_count > 0 and session_count % 500 == 0:
             print("\n🛑 استراحة 60 ثانية لحماية الـ API...")
             time.sleep(60)
         else:
